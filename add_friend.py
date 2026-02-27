@@ -8,8 +8,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-USER_ID = "maimaibot123456"
-USER_PW = "asdfghjkl123456"
+USER_ID = os.getenv("MAI_USER")
+USER_PW = os.getenv("MAI_PASS")
 TARGET_FRIEND_CODE = sys.argv[1] if len(sys.argv) > 1 else ""
 
 def run_add_friend_process():
