@@ -143,27 +143,40 @@ def generate_b50_image(df, friend_idx, driver):
             diff = row['難度']
             color = DIFF_COLORS.get(diff, (100, 100, 100))
             
-            # ✨ 使用剛測試成功的函式獲取 Image 物件
             cover_img = get_song_cover_object(row['歌曲'], driver)
             card = ImageOps.fit(cover_img, (220, 150), centering=(0.5, 0.5))
 
-            # 疊加漸層與邊框
             card = Image.alpha_composite(card, Image.composite(black_layer, Image.new('RGBA', (220, 150), (0,0,0,0)), grad_mask))
             overlay = Image.new('RGBA', (220, 150), (0,0,0,0))
             ImageDraw.Draw(overlay).rectangle([140, 0, 220, 45], fill=color+(180,))
             card = Image.alpha_composite(card, overlay)
             
             cdraw = ImageDraw.Draw(card)
-            # 寫上 R值
             rtxt = str(row['R值'])
             tw = cdraw.textbbox((0, 0), rtxt, font=f_card_r)[2] - cdraw.textbbox((0, 0), rtxt, font=f_card_r)[0]
             cdraw.text((180 - tw/2, 2), rtxt, fill=(255, 255, 255) if diff != "Re:Master" else (0,0,0), font=f_card_r)
 
-            # 歌曲資訊
+            # --- 修正後的名稱與類型繪製邏輯 ---
+            # 1. 繪製達成率資訊
             cdraw.text((10, 85), f"{row['定數']}  {row['達成率']}%", fill=(255, 255, 255), font=f_val)
-            sname = row['歌曲'][:15] + "..." if len(row['歌曲']) > 15 else row['歌曲']
+            
+            # 2. 處理類型 (DX/STD) 佈局
+            stype = str(row['類型'])
+            type_w = f_type.getlength(stype)
+            type_x = 220 - type_w - 5  # 右側留 5px 間距
+            cdraw.text((type_x, 122), stype, fill=(200, 200, 200), font=f_type)
+
+            # 3. 精確計算並截斷歌曲名稱
+            sname = str(row['歌曲'])
+            max_name_w = type_x - 15  # 名稱與類型標籤之間留 10px 緩衝
+            
+            if f_song.getlength(sname) > max_name_w:
+                while f_song.getlength(sname + "...") > max_name_w and len(sname) > 0:
+                    sname = sname[:-1]
+                sname += "..."
+            
             cdraw.text((10, 115), sname, fill=(255, 255, 255), font=f_song)
-            cdraw.text((180, 122), str(row['類型']), fill=(200, 200, 200), font=f_type)
+            # ------------------------------------
 
             img.paste(card.convert("RGB"), (x, y))
             draw.rectangle([x, y, x+220, y+150], outline=color, width=4)
@@ -173,7 +186,14 @@ def generate_b50_image(df, friend_idx, driver):
     last_y = draw_section(new_songs, 300, "NEW")
     draw_section(old_songs, last_y + 60, "OTHERS")
 
-    output_name = f"friend_{friend_idx}_B50.png"
-    img.save(output_name)
-    #print(f"OUTPUT_FILE:{output_name}")
-    return output_name
+    # --- 修改輸出邏輯 ---
+    # 使用絕對路徑，確保 Node.js 刪除時不會找錯地方
+    output_filename = f"b50_{friend_idx}_{int(time.time())}.png"
+    abs_path = os.path.abspath(output_filename)
+    
+    img.save(abs_path)
+    
+    # 這裡必須 print 出來，讓 Node.js 的 stdout 抓到
+    print(f"OUTPUT_FILE:{abs_path}", flush=True)
+    
+    return abs_path

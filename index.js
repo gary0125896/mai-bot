@@ -1,6 +1,11 @@
+const fs = require('fs'); // 加上這行，才能使用刪除功能
 const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const { spawn } = require('child_process');
-const { token, clientId, guildId } = require('./config.json');
+require('dotenv').config();
+
+const token = process.env.MAI_BOT_TOKEN;
+const clientId = process.env.CLIENT_ID;
+const guildId = process.env.GUILD_ID;
 
 const client = new Client({
     intents: [
@@ -10,6 +15,9 @@ const client = new Client({
         GatewayIntentBits.GuildMembers,
     ]
 });
+
+// --- 全域鎖變數 ---
+let isProcessing = false;
 
 const commands = [
     new SlashCommandBuilder()
@@ -41,23 +49,30 @@ client.once(Events.ClientReady, async (readyClient) => {
 client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
-    // --- 關鍵修正：確保 DeferReply 是第一順位執行，且完全捕捉錯誤 ---
+    // --- 檢查全域鎖 ---
+    if (isProcessing) {
+        return interaction.reply({ content: "⚠️ 機器人正在處理另一個請求中，請稍候 30-60 秒再試。", ephemeral: true });
+    }
+
     let deferred = false;
     try {
         await interaction.deferReply();
         deferred = true;
     } catch (err) {
         console.error("❌ DeferReply 失敗，互動已過期 (超過 3 秒):", err.message);
-        return; // 直接中斷，避免執行後續 spawn 浪費效能
+        return;
     }
 
     const { commandName } = interaction;
+    
+    // 進入指令邏輯，上鎖
+    isProcessing = true;
 
     // --- 指令 A: b50 ---
     if (commandName === 'b50') {
         const TARGET_FRIEND_ID = interaction.options.getString('userid');
 
-        const pythonProcess = spawn('python', ['catch-friend-score.py', TARGET_FRIEND_ID], {
+        const pythonProcess = spawn('python3', ['catch-friend-score.py', TARGET_FRIEND_ID], {
             env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
         });
 
@@ -69,22 +84,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const lines = output.split('\n').filter(l => l.trim().length > 0);
             lines.forEach((line) => {
                 if (!line.includes("OUTPUT_FILE:")) {
-                    // 使用 catch 靜默處理過期回應
                     interaction.editReply(`⏳ **正在分析**：${line.trim()}`).catch(() => {});
                 }
             });
         });
 
         pythonProcess.on('close', async (code) => {
+            isProcessing = false; // 程序結束，解鎖
             if (!deferred) return;
             try {
                 if (code === 0) {
                     const fileMatch = resultData.match(/OUTPUT_FILE:(.+)/);
                     if (fileMatch && fileMatch[1].trim() !== "ERROR_PATH") {
+                        const filePath = fileMatch[1].trim();
+
+                        // 1. 先上傳到 Discord
                         await interaction.editReply({
                             content: `✅ **${TARGET_FRIEND_ID}** 的 B50 分析完成！`,
-                            files: [fileMatch[1].trim()]
+                            files: [filePath]
                         });
+
+                        // 2. 上傳完畢後立刻刪除檔案
+                        if (fs.existsSync(filePath)) {
+                            fs.unlinkSync(filePath);
+                            console.log(`🗑️ 已刪除暫存圖檔: ${filePath}`);
+                        }
                     } else {
                         await interaction.editReply(`❌ 分析完成，但找不到數據。請確認是否已加好友。`);
                     }
@@ -99,7 +123,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (commandName === 'addfriend') {
         const FRIEND_CODE = interaction.options.getString('friendcode');
 
-        const addProcess = spawn('python', ['add_friend.py', FRIEND_CODE], {
+        const addProcess = spawn('python3', ['add_friend.py', FRIEND_CODE], {
             env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
         });
 
@@ -115,6 +139,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         addProcess.on('close', async (code) => {
+            isProcessing = false; // 程序結束，解鎖
             if (!deferred) return;
             try {
                 if (addResult.includes("SUCCESS_REQUEST_SENT")) {
